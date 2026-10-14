@@ -1,0 +1,376 @@
+{
+  "name": "ETL AI Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Upload Student CSV",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "data",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".csv",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "15483965-0455-4861-bb75-30d1c9ce4ada",
+      "name": "Upload Student CSV",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        304
+      ],
+      "webhookId": "2d9681d9-1c7b-40dc-b2cd-bd7ac9b84fd5"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "d42759ba-645a-486b-8e9f-3a77ed5337b0",
+      "name": "Extract from File",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        208,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a data-cleaning assistant for student enrollment records.\nReturn ONLY a JSON object (no explanation, no code fences) with exactly these keys:\n- \"Name\": the student name in Title Case (initials stay capital, e.g. \"Manoj K\")\n- \"Course\": exactly one of \"Python\", \"Machine Learning\", \"Data Science\" (\"ML\" means Machine Learning)\n\nRow:\nName: {{ $json.Name }}\nCourse: {{ $json.Course }}"
+      },
+      "id": "275731bf-1563-46c3-8e7a-5f0fa0ff7201",
+      "name": "Basic LLM Chain",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [
+        432,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "d434d838-e81e-4de2-ab7b-279fb3adf141",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        432,
+        528
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "d1QFwBd9sZVtKnEB",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "18e650c8-7c3a-4168-93ae-0accb215ba41",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        704,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Runs once for EACH student inside the loop\n// 1) Original row from \"Extract from File\" (paired item), 2) AI answer from Basic LLM Chain\nlet src = {};\ntry { src = $('Extract from File').item.json; } catch (e) { src = {}; }\n\nlet ai = {};\ntry {\n  const t = String($json.text ?? $json.output ?? '').replace(/```json|```/g, '').trim();\n  ai = JSON.parse(t);\n} catch (e) { ai = {}; }\n\nconst clean = v => String(v ?? '').replace(/\\s+/g, ' ').trim();\nconst titleCase = s => clean(s).toLowerCase().split(' ').filter(Boolean)\n  .map(w => w.length <= 2 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)).join(' ');\n\n// Course: trust the AI only if it returned an allowed value, else fall back to a map\nconst allowed = ['Python', 'Machine Learning', 'Data Science'];\nconst courseMap = { 'python': 'Python', 'ml': 'Machine Learning', 'machine learning': 'Machine Learning', 'data science': 'Data Science' };\nconst rawCourse = clean(src.Course).toLowerCase();\nconst course = allowed.includes(ai.Course) ? ai.Course : (courseMap[rawCourse] || titleCase(src.Course));\n\nconst email = clean(src.Email).toLowerCase();\nconst emailValid = /^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$/.test(email);\n\nconst phone = String(src.Phone ?? '').replace(/\\D/g, '');\nconst fee = clean(src.Fee_Paid).toLowerCase() === 'yes' ? 'Yes' : 'No';\nconst city = clean(src.City) ? titleCase(src.City) : 'Not Provided';\n\nconst d = clean(src.Enrolled_Date).split('-');            // dd-mm-yyyy\nconst date = d.length === 3 ? `${d[2]}-${d[1]}-${d[0]}` : clean(src.Enrolled_Date); // -> yyyy-mm-dd\n\nreturn {\n  json: {\n    Student_ID: clean(src.Student_ID).toUpperCase(),\n    Name: titleCase(src.Name),\n    Email: email,\n    Email_Status: emailValid ? 'Valid' : 'Invalid',\n    Phone: phone.length === 10 ? phone : '',\n    Course: course,\n    Fee_Paid: fee,\n    City: city,\n    Enrolled_Date: date\n  }\n};"
+      },
+      "id": "5afa85da-2025-4150-9cc8-797c3453415e",
+      "name": "Code in JavaScript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "compare": "selectedFields",
+        "fieldsToCompare": "Email",
+        "options": {}
+      },
+      "id": "b7382999-e405-4447-8f8a-6d34d5de631c",
+      "name": "Remove Duplicates",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "326379e2-b9b5-43c7-bb36-4559429aec36",
+              "leftValue": "={{ $json.Fee_Paid }}",
+              "rightValue": "Yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "10d894b7-1c14-4dcb-9054-d2563e36c13a",
+      "name": "Filter - Fee Paid",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "fileName": "students_clean.csv"
+        }
+      },
+      "id": "d19a91f4-055c-4b14-bf1b-9e4d72ba4e6e",
+      "name": "Convert Clean to CSV",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1408,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "50ff7da4-7f60-4152-bea4-85263b5f4dec",
+              "leftValue": "={{ $json.City }}",
+              "rightValue": "Chennai",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "17ac0236-2d37-449d-8c98-887697de334c",
+              "leftValue": "={{ $json.Email_Status }}",
+              "rightValue": "Valid",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e257a836-047d-4311-97f5-3a87593be9d2",
+      "name": "If Chennai & Valid Email",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "fileName": "students_chennai_valid_email.csv"
+        }
+      },
+      "id": "c8bf1908-4310-40ee-bc8d-7d4488b726ad",
+      "name": "Convert Chennai to CSV",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1632,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "fileName": "students_others.csv"
+        }
+      },
+      "id": "6fd597ab-d3d6-4711-bb4f-f7583ccd35c2",
+      "name": "Convert Others to CSV",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1632,
+        352
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Filter - Fee Paid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter - Fee Paid": {
+      "main": [
+        [
+          {
+            "node": "Convert Clean to CSV",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If Chennai & Valid Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Chennai & Valid Email": {
+      "main": [
+        [
+          {
+            "node": "Convert Chennai to CSV",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Convert Others to CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Student CSV": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "24206b4f-3274-4215-965e-52b83241d59c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a3bc426882fc510d065edbe57913cf0ed5b66b6ec4b55f03d5f098fb80b0e0e7"
+  },
+  "nodeGroups": [],
+  "id": "IKsR5hYFatr8nMyu",
+  "tags": []
+}
